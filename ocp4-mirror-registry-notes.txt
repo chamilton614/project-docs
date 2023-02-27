@@ -1,0 +1,129 @@
+
+Mirror Registry VM - https://docs.openshift.com/container-platform/4.11/installing/disconnected_install/installing-mirroring-creating-registry.html
+
+1. Choose Centos 8, Centos 8 Stream, RHEL 8 and download the chosen ISO
+2. Build the VM in vSphere as a 2 CPU, 8GB RAM, 500GB Disk with Static IP address on Main Network
+3. Start the OS Install - Minimal install, Basic User that is an Admin, Set User and Root Passwords
+4. SSH Login to registry VM as local Admin - ssh user@registry
+5. Update the Package Index - yum update -y
+6. Set the EPEL Repo - yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
+7. Install vim, ansible and git and clone the Helper Node Repo
+    - yum -y install vim ansible git podman jq
+8. Update VIM Editor
+    cat <<EOT >> ~/.vimrc
+    syntax on
+    set nu et ai sts=0 ts=2 sw=2 list hls
+    EOT
+9. Download the Mirror Registry files from try.openshift.com
+10. Copy the Mirror Registry files to the Registry VM and extract
+    mkdir /home/user/registry
+    scp mirror-registry.tar.gz user@registry:/home/user/registry
+    cd /home/user/registry
+    chmod +x mirror-registry.tar.gz 
+    tar xvf mirror-registry.tar.gz
+11. Update execute permissions on extracted tars
+    chmod +x *.tar
+12. Install the Mirror Registry
+    sudo ./mirror-registry install \
+    --quayHostname registry.home \
+    --quayRoot /home/chamilton/registry
+ Quay installed successfully, permanent data is stored in /home/chamilton/registry 
+ Quay is available at https://registry.home:8443 with credentials (init, MwqJ30bok1B9HFZsW2u7O5K6IfjgDp84)
+
+13. Login to the Mirror Registry from Command Line
+    podman login -u init \
+    -p <password generated from install> \
+    registry.home:8443 \
+    --tls-verify=false
+14. Login to the Mirror Registry from a Browser
+    https://registry.home:8443
+    Username: init
+    Password: MwqJ30bok1B9HFZsW2u7O5K6IfjgDp84
+
+15. Not Needed Now - Updating the Mirror Registry
+    sudo ./mirror-registry upgrade -v \
+    --quayHostname registry.home \
+    --quayRoot /home/chamilton/registry
+
+16. Uninstall Mirror Registry
+    sudo ./mirror-registry uninstall -v \
+    --quayRoot /home/chamilton/registry
+
+17. Install openshift-client-linux
+18. Download openshift pull secret from try.openshift.com
+19. Make a copy of the pull secret in JSON format
+    cat ./pull-secret | jq . > /home/chamilton/pull-secret.json
+20. Base64 encode the Mirror Registry Username and Password
+    echo -n 'init:MwqJ30bok1B9HFZsW2u7O5K6IfjgDp84' | base64 -w0
+    aW5pdDpNd3FKMzBib2sxQjlIRlpzVzJ1N081SzZJZmpnRHA4NA==
+21. Update the pull-secret.json to include the Mirror Registry credentials
+    "auths": {
+    "registry.home:8443": { 
+      "auth": "<base64 credentials>", 
+      "email": "you@example.com"
+    },
+22. Set the Environment Variables
+    OCP_RELEASE=4.11.9 \
+    LOCAL_REGISTRY='registry.home:8443' \
+    LOCAL_REPOSITORY='ocp4/openshift4' \
+    PRODUCT_REPO='openshift-release-dev' \
+    LOCAL_SECRET_JSON='/home/chamilton/pull-secret.json' \
+    RELEASE_NAME="ocp-release" \
+    ARCHITECTURE=x86_64
+23. Push the OpenShift Release Images to the Mirror Registry
+    oc adm release mirror -a ${LOCAL_SECRET_JSON}  \
+     --from=quay.io/${PRODUCT_REPO}/${RELEASE_NAME}:${OCP_RELEASE}-${ARCHITECTURE} \
+     --to=${LOCAL_REGISTRY}/${LOCAL_REPOSITORY} \
+     --to-release-image=${LOCAL_REGISTRY}/${LOCAL_REPOSITORY}:${OCP_RELEASE}-${ARCHITECTURE} \
+     --skip-verification=true --insecure=true
+24. *To use the Mirror Registry in an OpenShift install add the following to the install-config.yaml
+    imageContentSources:
+    - mirrors:
+      - registry.home:8443/ocp4/openshift4
+      source: quay.io/openshift-release-dev/ocp-release
+    - mirrors:
+      - registry.home:8443/ocp4/openshift4
+      source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+25. *To use the Mirror Registry in an OpenShift Upgrade add the following to create an ImageContentSourcePolicy.yaml
+    apiVersion: operator.openshift.io/v1alpha1
+    kind: ImageContentSourcePolicy
+    metadata:
+      name: example
+    spec:
+      repositoryDigestMirrors:
+      - mirrors:
+        - registry.home:8443/ocp4/openshift4
+        source: quay.io/openshift-release-dev/ocp-release
+      - mirrors:
+        - registry.home:8443/ocp4/openshift4
+        source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+
+26. To Mirror Operator Catalogs with the Mirror Registry
+    Reuse LOCAL_SECRET_JSON='/home/chamilton/pull-secret.json'
+    oc adm catalog mirror \
+    registry.redhat.io/redhat/redhat-operator-index:v4.11 \
+    registry.home:8443/olm-mirror \
+    -a ${LOCAL_SECRET_JSON} \
+    --insecure=true \
+    --index-filter-by-os='linux/amd64'
+    
+    * ignore this [--manifests-only]
+
+NOTE THIS Will run for a while ~3-4hrs
+
+
+***If you need to increase the disk size due to running out of diskspace***
+Use these 2 sites in order
+1. https://community.webcore.cloud/tutorials/linux_specific_articles/how_to_extend_partition_with_unallocated_space_cen/
+    - last step does not work so move to next URL to finish the rest
+
+2. https://www.redhat.com/sysadmin/resize-lvm-simple
+    - Extend Volume Group, Extend Logical Volume, Extend Filesystem
+
+
+
+manifests-redhat-operator-index-1676986574
+
+oc adm catalog mirror registry.redhat.io/redhat/redhat-operator-index:v4.11 \
+registry.home:8443/olm-mirror -a ${LOCAL_SECRET_JSON} --insecure=true \
+--index-filter-by-os='linux/amd64' --continue-on-error=true --max-components=2
